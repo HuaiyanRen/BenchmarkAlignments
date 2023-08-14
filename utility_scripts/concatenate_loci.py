@@ -3,21 +3,22 @@
 # cd to the infile before running
 
 from Bio.Nexus import Nexus
-from Bio import AlignIO
+#from Bio import AlignIO
 import os
 
-infile = "/Users/roblanfear/Dropbox/Projects_Current/benchmark_alignments_in_progress/Wu_2018_aa/cds_aa_nex"
+infile = r"C:\Users\u7151703\Desktop\research\datasets\Sanchez-Baracaldo_2017\nex"
 
 file_list = [x for x in os.walk(infile)][0][2]
 print(file_list)
+full_file_list = [[x, os.path.join(infile, x)] for x in file_list]
 
-try:
-	file_list.remove(".DS_Store") # thanks Mac
-except:
-	pass
+#try:
+#	file_list.remove(".DS_Store") # thanks Mac
+#except:
+#	pass
 
 print("loading files")
-nexi =  [(fname, Nexus.Nexus(fname)) for fname in file_list]
+nexi =  [(fname[0], Nexus.Nexus(fname[1])) for fname in full_file_list]
 
 print("combining alignments")
 combined = Nexus.combine(nexi)
