@@ -14,10 +14,11 @@ logging.basicConfig(format='%(levelname)s:\t%(asctime)s:\t%(message)s', datefmt=
 # first we get a list of all the datasets
 # each one is a dataset that SHOULD have an associated .yaml readme
 dataset_folders = [x[0] for x in walklevel(os.path.join(os.getcwd(), "../datasets"))][1:]
+#dataset_folders = [x for x in os.walk(r"C:\Users\u7151703\Desktop\research\datasets\processing\nex\datasets")][0][2]
 
 logging.info("Found %d datasets" %(len(dataset_folders)))
 for f in dataset_folders:
-	logging.info("    %s", f)
+	logging.info("%s", f)
 
 # read each file and extract the things you want, writing a csv as you go
 warnings = 0

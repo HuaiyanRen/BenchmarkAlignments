@@ -24,7 +24,7 @@ def edit_text(inpath):
             line = '\n\tCHARPARTITION loci ='
             for i in range(len(loci_list)):
                 line = line + ' ' + str(i+1) + ':' + loci_list[i] + ','
-            lines[l] = line +';\n\n\t[genomes]\n\n\t[outgroups]\n\n'
+            lines[l] = line +';\n\n\t[genomes]\n\n\tCHARPARTITION genomes =\n\n\t[outgroups]\n\tTAXSET outgroups =\n\n'
         elif '#NEXUS' in lines[l] or ';' in lines[l]:
             continue
         else:

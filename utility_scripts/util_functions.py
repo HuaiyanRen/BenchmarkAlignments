@@ -2,7 +2,9 @@
 import yaml
 import logging
 import datetime
-import urllib2
+#import urllib2
+from urllib.request import urlopen
+from urllib.error import URLError
 from Bio.Nexus import Nexus
 from Bio import SeqUtils
 import itertools
@@ -32,13 +34,13 @@ def check_alignment(alignment_file):
 
     # Check that there are just two charpartitions: 'loci' and 'genomes'
     logging.info("        checking correct charpartitions exist")
-    if aln.charpartitions.keys() != ['loci', 'genomes']:
+    if list(aln.charpartitions.keys()) != ['loci', 'genomes']:
         logging.error("There should be exactly two CHARPARTITIONS: 'loci' and 'genomes'. Check and try again.")    
         raise ValueError
 
     # Check for an 'outgroup' taxset
     logging.info("        checking outgroup taxset exists")
-    if aln.taxsets.keys() != ['outgroups']:
+    if list(aln.taxsets.keys()) != ['outgroups']:
         logging.error("There should be exactly one TAXSET: 'outgroups'. Check and try again.")    
         raise ValueError
 
@@ -78,7 +80,7 @@ def check_alignment(alignment_file):
 
 def check_yaml(yaml_file):
 
-    y = yaml.load(open(yaml_file, 'r'))
+    y = yaml.load(open(yaml_file, 'r'),Loader=yaml.FullLoader)
 
     # Basic structure of the file
     logging.info("        checking basic structure")
@@ -139,7 +141,7 @@ def check_yaml(yaml_file):
 
 def check_aln_block(aln):
 
-    if isinstance(aln['datatype'], basestring) == False:
+    if isinstance(aln['datatype'], str) == False:
         logging.error("The datatype must be a string")
         raise ValueError
 
@@ -183,11 +185,11 @@ def check_genomes(gen):
 
 def check_clade(clade):
 
-    if isinstance(clade['latin'], basestring) == False:
+    if isinstance(clade['latin'], str) == False:
         logging.error("The latin clade must be a string")
         raise ValueError
 
-    if isinstance(clade['english'], basestring) == False:
+    if isinstance(clade['english'], str) == False:
         logging.error("The latin clade must be a string")
         raise ValueError
 
@@ -247,8 +249,8 @@ def check_license(license):
 
 def check_url(url):
     try: 
-        urllib2.urlopen(url, timeout = 4)
-    except urllib2.URLError as e:
+        urlopen(url, timeout = 4)
+    except URLError as e:
         logging.error("        there was a URLError: %r" % e)
         logging.error("        this URL didn't work: %s" % url)
     except:
