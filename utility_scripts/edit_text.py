@@ -1,0 +1,47 @@
+import os
+import argparse
+
+
+def edit_text(inpath):
+    
+    file = os.path.join(inpath, 'alignment.nex')
+    with open(file, 'r') as file_open:
+        lines = file_open.readlines()
+    
+    loci_list = []
+    for l in range(len(lines)):
+        if 'begin data' in lines[l]:
+            lines[l] = lines[l].replace('data','DATA')
+        elif 'begin sets' in lines[l]:
+            line = lines[l].replace('sets','SETS')
+            lines[l] = line + '\n\t[loci]\n'
+        elif 'dimensions ' in lines[l] or 'format ' in lines[l] or 'matrix' in lines[l]:
+            lines[l] = '\t' + lines[l]
+        elif 'charset ' in lines[l]:
+            loci_list.append(lines[l].split()[1])
+            lines[l] = lines[l].replace('charset','\tCHARSET')
+        elif 'charpartition combined' in lines[l]:
+            line = '\n\tCHARPARTITION loci ='
+            for i in range(len(loci_list)):
+                line = line + ' ' + str(i+1) + ':' + loci_list[i] + ','
+            lines[l] = line +';\n\n\t[genomes]\n\n\t[outgroups]\n\n'
+        elif '#NEXUS' in lines[l] or ';' in lines[l]:
+            continue
+        else:
+            lines[l] = '\t' + lines[l]
+    
+    with open(file, 'w') as file_open:
+        for line in lines:
+            file_open.write(line)
+
+# running
+parser = argparse.ArgumentParser(description='')
+parser.add_argument('--inpath', '-i', help='', 
+                    default = r"C:\Users\u7151703\Desktop\research\datasets\processing\nex")
+args = parser.parse_args()
+
+if __name__ == '__main__':
+    try:
+       edit_text(args.inpath)
+    except Exception as e:
+        print(e)
