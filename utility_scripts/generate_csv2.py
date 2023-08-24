@@ -1,9 +1,9 @@
 #!python3.5
-import os
+#import os
 import yaml
 import pandas as pd
-import glob
-import AMAS
+#import glob
+#import AMAS
 
 # generate a df from the YAML file
 with open(r"C:\Users\u7151703\Desktop\research\datasets\processing\nex\datasets\README.yaml", 'r') as f:
