@@ -8,7 +8,6 @@ import argparse
 
 def concatenate_loci(inpath):
 
-    #infile = r"C:\Users\u7151703\Desktop\research\datasets\Sanchez-Baracaldo_2017\nex"
 
     file_list = [x for x in os.walk(inpath)][0][2]
     print(file_list)
@@ -23,7 +22,10 @@ def concatenate_loci(inpath):
     combined = Nexus.combine(nexi)
 
     print("writing output")
-    outfile = os.path.join(inpath, "alignment.nex")
+    outpath = os.path.join(inpath, 'datasets')
+    if not os.path.isdir(outpath):
+        os.makedirs(outpath)
+    outfile = os.path.join(outpath, "alignment.nex")
     outfile = open(outfile, 'w')
     combined.write_nexus_data(outfile)
     outfile.close()
@@ -41,5 +43,4 @@ if __name__ == '__main__':
        concatenate_loci(args.inpath)
     except Exception as e:
         print(e)
-
     

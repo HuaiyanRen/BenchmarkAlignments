@@ -8,7 +8,6 @@ def edit_text(inpath):
     with open(file, 'r') as file_open:
         lines = file_open.readlines()
     
-    loci_list = []
     for l in range(len(lines)):
         if 'begin data' in lines[l]:
             lines[l] = lines[l].replace('data','DATA')
@@ -18,13 +17,10 @@ def edit_text(inpath):
         elif 'dimensions ' in lines[l] or 'format ' in lines[l] or 'matrix' in lines[l]:
             lines[l] = '\t' + lines[l]
         elif 'charset ' in lines[l]:
-            loci_list.append(lines[l].split()[1])
             lines[l] = lines[l].replace('charset','\tCHARSET')
         elif 'charpartition combined' in lines[l]:
-            line = '\n\tCHARPARTITION loci ='
-            for i in range(len(loci_list)):
-                line = line + ' ' + str(i+1) + ':' + loci_list[i] + ','
-            lines[l] = line +';\n\n\t[genomes]\n\n\tCHARPARTITION genomes =\n\n\t[outgroups]\n\tTAXSET outgroups =\n\n'
+            lines[l] = lines[l].replace('charpartition combined','\n\tCHARPARTITION loci')
+            lines[l] = lines[l] +'\n\n\t[genomes]\n\n\tCHARPARTITION genomes =\n\n\t[outgroups]\n\tTAXSET outgroups =\n\n'
         elif '#NEXUS' in lines[l] or ';' in lines[l]:
             continue
         else:

@@ -41,7 +41,7 @@ logging.info("    checking YAML file")
 yaml_file = os.path.join(folder, "README.yaml")
 check_yaml(yaml_file)
 
-# 4. check the alignment file
+# 3. check the alignment file
 logging.info("    checking alignment.nex file")
 
 alignment_file = os.path.join(folder, "alignment.nex")
@@ -49,5 +49,5 @@ aln = check_alignment(alignment_file)
 
 logging.info("    done, no errors found")
 
-logging.info("Database contains %d datasets" % ( len(dataset_folders)))
-logging.info("All datasets checked and no errors detected")
+#logging.info("Database contains %d datasets" % ( len(dataset_folders)))
+#logging.info("All datasets checked and no errors detected")
