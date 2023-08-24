@@ -36,6 +36,14 @@ import argparse, multiprocessing as mp, re, sys
 from random import sample
 from os import path, remove
 from collections import defaultdict, Counter
+from itertools import compress
+
+def proportion(x):
+    # needed to prevent input of invalid floats in trim mode
+    x = float(x)
+    if x < 0.0 or x > 1.0:
+        raise argparse.ArgumentTypeError("%r not in range [0.0, 1.0]"%(x,))
+    return x
 
 class ParsedArgs:
 
@@ -50,6 +58,8 @@ The AMAS commands are:
   split       Split alignment according to a partitions file
   summary     Write alignment summary
   remove      Remove taxa from alignment
+  translate   Translate DNA alignment into protein alignment
+  trim        Remove columns from alignment
 
 Use AMAS <command> -h for help with arguments of the command of interest
 '''
@@ -117,6 +127,47 @@ Use AMAS <command> -h for help with arguments of the command of interest
             help = "Type of data"
         )
 
+    def trim(self):
+        # convert command
+
+        parser = argparse.ArgumentParser(
+            description="Trim alignment by occupancy. Optionally removes sites that are not parsimony informative. \n CAUTION: when running on amino acids stop codons marked with * will be treated as missing data!",
+        )
+        parser.add_argument(
+            "-u",
+            "--out-format",
+            dest = "out_format",
+            choices = ["fasta", "phylip", "nexus", "phylip-int", "nexus-int"],
+            default = "fasta",
+            help = "File format for the output alignment. Default: fasta"
+        )
+        parser.add_argument(
+            "-o",
+            "--trim-out",
+            dest = "trim_out",
+            help = "File name for the trimmed alignment when providing a single file as input."
+        )
+        parser.add_argument(
+            "-t",
+            "--trim-fraction",
+            type = proportion, 
+            dest = "trim_fraction",
+            default = 0.6,
+            help = "Columns in the alignments with occupancy lower than this value will be removed. Default: 0.6"
+        )
+        parser.add_argument(
+            "-p",
+            "--retain-only-parsimony-sites",
+            dest = "parsimony_check",
+            action = "store_true",
+            default = False,
+            help = "Only write parsimony informative columns in trimmed alignment Default: write all columns"
+        )
+        # add shared arguments
+        self.add_common_args(parser)
+        args = parser.parse_args(sys.argv[2:])
+        return args
+
     def summary(self):
        # summary command
         parser = argparse.ArgumentParser(
@@ -176,7 +227,15 @@ Use AMAS <command> -h for help with arguments of the command of interest
             choices = ["nexus", "raxml", "unspecified"],
             default = "unspecified",
             help = "Format of the partitions file. Default: 'unspecified'"
-        ) 
+        )
+        parser.add_argument(
+            "-n",
+            "--codons",
+            dest = "codons",
+            choices = ["none", "12", "123"],
+            default = "none",
+            help = "Use codon partitioning for 1st and 2nd or all three positions. Default: Don't use"
+        )  
         # add shared arguments
         self.add_common_args(parser)
         args = parser.parse_args(sys.argv[2:])
@@ -427,8 +486,7 @@ class FileParser:
         for match in tax_chars_matches:
             tax_match = match.group(2)
             chars_match = match.group(3)
-        #print(tax_match)
-        #print(chars_match)
+
         # initiate lists for taxa names and sequence strings on separate lines
         taxa = []
         sequences = []
@@ -658,9 +716,7 @@ class Alignment:
         self.prop_variable = self.get_prop_variable()
         self.parsimony_informative = self.get_parsimony_informative()
         self.prop_parsimony = self.get_prop_parsimony()
-        self.char_count_records = self.get_counts_from_parsed()
         self.missing_records = self.get_missing_from_parsed()
-        print(self.missing_records)
         name = str(self.get_name())
         taxa_no = str(self.get_taxa_no())
         cells = str(self.get_matrix_cells())
@@ -675,13 +731,13 @@ class Alignment:
         # get summary for all taxa/sequences in alignment
         per_taxon_summary = []
         taxa_no = self.get_taxa_no()
-        self.length = self.get_alignment_length()
         self.missing_records = self.get_missing_from_parsed()
-        self.char_count_records = self.get_counts_from_parsed()
+        self.length = self.get_alignment_length()
         lengths = (self.length for i in range(taxa_no))
         name = self.get_name()
         names = (name for i in range(taxa_no))
-        taxa_names = (taxon.replace(" ","_").replace(".","_").replace("'","") for taxon, missing_count, missing_percent in self.missing_records)
+        taxa_names = (taxon.replace(" ","_").replace(".","_").replace("'","") \
+         for taxon, missing_count, missing_percent in self.missing_records)
         missing = (missing_count for taxon, missing_count, missing_percent in self.missing_records)
         missing_percent = (missing_percent for taxon, missing_count, missing_percent in self.missing_records)
         self.check_data_type()
@@ -706,7 +762,7 @@ class Alignment:
 
     def get_taxon_char_summary(self):
         # get summary of frequencies for all characters
-        records = (self.append_count(char_dict) for taxon, char_dict in self.char_count_records)
+        records = (self.append_count(char_dict) for taxon, char_dict in self.get_counts_from_parsed())
         return records
 
     def append_count(self, char_dict):
@@ -733,15 +789,35 @@ class Alignment:
 
     def get_sites_no_missing_ambiguous(self):
         # get each site without missing or ambiguous characters
-         no_missing_ambiguous_sites = []
-         add_to_no_mis_amb = no_missing_ambiguous_sites.append
-
-         for column in range(self.get_alignment_length()):
-             site = self.get_column(column)
-             new_site = [char for char in site if char not in self.missing_ambiguous_chars]
-             add_to_no_mis_amb(new_site)
+         no_missing_ambiguous_sites = [self.get_site_no_missing_ambiguous(column) for column in range(self.get_alignment_length())]
          return no_missing_ambiguous_sites
-        
+
+    def get_site_no_missing_ambiguous(self, column):
+        site = self.get_column(column)
+        return [char for char in site if char not in self.missing_ambiguous_chars]
+
+    def replace_missing(self, column):
+        return ["-" if x in self.missing_chars else x for x in self.get_column(column)]
+
+    def get_trim_selection(self, trim_fraction, parsimony_check):
+        # this checks each column of alignment for minimum occupancy
+        self.matrix = self.matrix_creator()
+        trim_vector = []
+        for column in range(self.get_alignment_length()):
+            site = self.replace_missing(column)
+            occ = (len(site) - site.count("-")) / len(site)
+            if parsimony_check:
+                unique_chars = set(site)
+                try:
+                    unique_chars.remove("-")
+                except KeyError: 
+                    pass # this occurs if we have no missing data
+                pattern = [base for base in unique_chars if site.count(base) >= 2]
+                trim_vector.append(len(pattern) >= 2 and occ >= trim_fraction)
+            else:
+                trim_vector.append(occ >= trim_fraction)
+        return trim_vector
+   
     def get_variable(self):
         # if all elements of a site without missing or ambiguous characters 
         # are not the same, consider it variable
@@ -822,7 +898,7 @@ class Alignment:
 
     def get_counts(self):
         # get counts of each character in the used alphabet for all sequences
-        counters = [Counter(chars) for taxon, chars in self.char_count_records]
+        counters = [Counter(chars) for taxon, chars in self.get_counts_from_parsed()]
         all_counts = sum(counters, Counter())
         counts_dict = dict(all_counts)
         return counts_dict
@@ -830,9 +906,8 @@ class Alignment:
     def get_counts_from_parsed(self):
         # get counts of all characters from parsed alignment
         # return a list of tuples with taxon name and counts
-        self.char_count_records = sorted([(taxon, self.get_counts_from_seq(seq)) \
+        return sorted([(taxon, self.get_counts_from_seq(seq)) \
          for taxon, seq in self.parsed_aln.items()])
-        return self.char_count_records
 
     def get_counts_from_seq(self, seq):
         # get all alphabet chars count for individual sequence
@@ -840,9 +915,9 @@ class Alignment:
         return char_counts
 
     def check_data_type(self):
-        # check if the data type is correct
-        self.check = any(any(char in self.non_alphabet for char in seq) \
-         for seq in self.parsed_aln.values())
+        # check if the data type is correct; only one seq to save on computation
+        seq = next(iter(self.parsed_aln.values()))
+        self.check = any(char in self.non_alphabet for char in seq)
         if self.check is True:
             print("WARNING: found non-" + self.data_type + " characters. "\
              "Are you sure you specified the right data type?")
@@ -900,8 +975,8 @@ class DNAAlignment(Alignment):
         # get AC and GC contents for all sequences
         # AT content is the first element of AT, GC content tuple
         # returned by get_atgc_from_seq()
-        self.get_atgc_from_parsed()
-        at_content = round(sum(atgc[0] for taxon, atgc in self.atgc_records) \
+        atgc_records = self.get_atgc_from_parsed()
+        at_content = round(sum(atgc[0] for taxon, atgc in atgc_records) \
          / self.get_taxa_no(), 3)
         gc_content = round(1 - float(at_content), 3)
         
@@ -909,16 +984,14 @@ class DNAAlignment(Alignment):
         return atgc_content
 
     def get_list_from_atgc(self):
-        self.atgc_records = self.get_atgc_from_parsed()
-        records = (atgc for taxon, atgc in self.atgc_records)
+        records = (atgc for taxon, atgc in self.get_atgc_from_parsed())
         return records
 
     def get_atgc_from_parsed(self):
         # get AT and GC contents from parsed alignment dictionary
         # return a list of tuples with taxon name, AT content, and GC content
-        self.atgc_records = sorted([(taxon, self.get_atgc_from_seq(seq)) \
+        return sorted([(taxon, self.get_atgc_from_seq(seq)) \
          for taxon, seq in self.parsed_aln.items()])
-        return self.atgc_records
         
     def get_atgc_from_seq(self, seq):
         # get AT and GC contents from individual sequences
@@ -966,6 +1039,10 @@ class MetaAlignment():
         if self.command == "translate":
             self.reading_frame = kwargs.get("reading_frame")
             self.genetic_code = kwargs.get("genetic_code")
+        if self.command == "trim":
+            self.trim_fraction = kwargs.get("trim_fraction")
+            self.trim_out = kwargs.get("trim_out")
+            self.parsimony_check = kwargs.get("parsimony_check", False)
 
         self.alignment_objects = self.get_alignment_objects()
         self.parsed_alignments = self.get_parsed_alignments()
@@ -1211,7 +1288,6 @@ class MetaAlignment():
         return "".join(protein)
 
     def translate_dict(self, source_dict):
-        #print(self.codes.get(str(1)))
         translation_table = self.codes.get(self.genetic_code)
         translated_dict = {}
         for taxon, seq in sorted(source_dict.items()):
@@ -1223,7 +1299,6 @@ class MetaAlignment():
         return translated_dict
 
     def get_translated(self, translation_table, reading_frame):
-
         if int(self.cores) == 1:
             translated_alignments = [self.translate_dict(alignment) for alignment in self.parsed_alignments]            
         elif int(self.cores) > 1:
@@ -1231,6 +1306,24 @@ class MetaAlignment():
             translated_alignments = pool.map(self.translate_dict, self.parsed_alignments)
 
         return translated_alignments
+
+    def trim_dict(self, alignment):
+        trim_vector = alignment.get_trim_selection(self.trim_fraction, self.parsimony_check)
+        aln_dict = alignment.parsed_aln
+        for key in aln_dict:
+            aln_dict[key] = ''.join(list(compress(aln_dict[key], trim_vector)))
+
+        return aln_dict
+
+    def get_trimmed(self, trim_fraction, parsimony_check):
+        if int(self.cores) == 1:
+            trimmed_alignments = [self.trim_dict(alignment) for alignment in self.alignment_objects]            
+        elif int(self.cores) > 1:
+            pool = mp.Pool(int(self.cores))
+            trimmed_alignments = pool.map(self.trim_dict, self.alignment_objects)
+
+        return trimmed_alignments
+
         
     def remove_unknown_chars(self, seq):
         # remove unknown characters from sequence
@@ -1405,7 +1498,13 @@ class MetaAlignment():
             header = aa_header + freq_header
         elif self.data_type == "dna":
             header = dna_header + freq_header
-        summaries =  [alignment.get_taxa_summary() for alignment in alignments]
+
+        # use multiprocessing if more than one core specified
+        if int(self.cores) == 1:
+            summaries = [alignment.get_taxa_summary() for alignment in alignments]            
+        elif int(self.cores) > 1:
+            pool = mp.Pool(int(self.cores))
+            summaries = pool.map(self.summarize_alignments_taxa, alignments)
            
         return header, summaries
 
@@ -1425,6 +1524,7 @@ class MetaAlignment():
         new_summ = ['\t'.join(summary) for summary in summary_out[1]]
         summary_file.write(header + '\n')
         summary_file.write('\n'.join(new_summ))
+        summary_file.write('\n')
         summary_file.close()
         print("Wrote summaries to file '" + file_name + "'")
 
@@ -1440,6 +1540,7 @@ class MetaAlignment():
             new_summ = ['\t'.join(row) for row in summ]
             summary_file.write(header + '\n')
             summary_file.write('\n'.join(new_summ))
+            summary_file.write('\n')
             summary_file.close()
        
     def get_replicate(self, no_replicates, no_loci):
@@ -1672,16 +1773,28 @@ class MetaAlignment():
         alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)] 
         return sorted(a_list, key = alphanum_key)
 
-    def print_unspecified_partitions(self):
+    def print_unspecified_partitions(self, codons):
         # print partitions for concatenated alignment
         part_string = ""
         part_dict = self.get_concatenated(self.parsed_alignments)[1]
         part_list = self.natural_sort(part_dict.keys())
-        for key in part_list:
-            part_string += key + " = " + str(part_dict[key]) + "\n"
+        if codons == "none":
+            for key in part_list:
+                part_string += key + " = " + str(part_dict[key]) + "\n"
+        elif codons == "12":
+            for key in part_list:
+                start, end = str(part_dict[key]).split("-")
+                part_string += key + "_pos1" + " = " + start + "-" + end + "\\2" + "\n"
+                part_string += key + "_pos2" + " = " + str(int(start) + 1) + "-" + end + "\\2" + "\n"
+        elif codons == "123":
+            for key in part_list:
+                start, end = str(part_dict[key]).split("-")
+                part_string += key + "_pos1" + " = " + start + "-" + end + "\\3" + "\n"
+                part_string += key + "_pos2" + " = " + str(int(start) + 1) + "-" + end + "\\3" + "\n"
+                part_string += key + "_pos3" + " = " + str(int(start) + 2) + "-" + end + "\\3" + "\n"
         return part_string
 
-    def print_nexus_partitions(self):
+    def print_nexus_partitions(self, codons):
         # print partitions for concatenated alignment
         part_string = ""
         part_dict = self.get_concatenated(self.parsed_alignments)[1]
@@ -1689,34 +1802,70 @@ class MetaAlignment():
         # write beginning of nexus sets
         part_string += "#NEXUS\n\n"
         part_string += "Begin sets;\n"
-        for key in part_list:
-            part_string += "\tcharset " + key + " = " + str(part_dict[key]) + ";\n"
+        if codons == "none":
+            for key in part_list:
+                part_string += "\tcharset " + key + " = " + str(part_dict[key]) + ";\n"
+        elif codons == "12":
+            for key in part_list:
+                start, end = str(part_dict[key]).split("-")
+                part_string += "\tcharset " + key + "_pos1" + " = " + start + "-" + end + "\\2" + ";\n"
+                part_string += "\tcharset " + key + "_pos2" + " = " + str(int(start) + 1) + "-" + end + "\\2" + ";\n"
+        elif codons == "123":
+            for key in part_list:
+                start, end = str(part_dict[key]).split("-")
+                part_string += "\tcharset " + key + "_pos1" + " = " + start + "-" + end + "\\3" + ";\n"
+                part_string += "\tcharset " + key + "_pos2" + " = " + str(int(start) + 1) + "-" + end + "\\3" + ";\n"
+                part_string += "\tcharset " + key + "_pos3" + " = " + str(int(start) + 2) + "-" + end + "\\3" + ";\n"
         part_string += "End;"
         return part_string
 
-    def print_raxml_partitions(self, data_type):
+    def print_raxml_partitions(self, data_type, codons):
         # print partitions for concatenated alignment
         part_string = ""
         part_dict = self.get_concatenated(self.parsed_alignments)[1]
         part_list = self.natural_sort(part_dict.keys())
         if data_type == "dna":
-            for key in part_list:
-                part_string += "DNA, " + key + " = " + str(part_dict[key]) + "\n"
+            if codons == "none":
+                for key in part_list:
+                    part_string += "DNA, " + key + " = " + str(part_dict[key]) + "\n"
+            elif codons == "12":
+                for key in part_list:
+                    start, end = str(part_dict[key]).split("-")
+                    part_string += "DNA, " + key + "_pos1" + " = " + start + "-" + end + "\\2" + "\n"
+                    part_string += "DNA, " + key + "_pos2" + " = " + str(int(start) + 1) + "-" + end + "\\2" + "\n"
+            elif codons == "123":
+                for key in part_list:
+                    start, end = str(part_dict[key]).split("-")
+                    part_string += "DNA, " + key + "_pos1" + " = " + start + "-" + end + "\\3" + "\n"
+                    part_string += "DNA, " + key + "_pos2" + " = " + str(int(start) + 1) + "-" + end + "\\3" + "\n"
+                    part_string += "DNA, " + key + "_pos3" + " = " + str(int(start) + 2) + "-" + end + "\\3" + "\n"
         if data_type == "aa":
-            for key in part_list:
-                part_string += "WAG, " + key + " = " + str(part_dict[key]) + "\n"
+            if codons == "none":
+                for key in part_list:
+                    part_string += "WAG, " + key + " = " + str(part_dict[key]) + "\n"
+            elif codons == "12":
+                for key in part_list:
+                    start, end = str(part_dict[key]).split("-")
+                    part_string += "WAG, " + key + "_pos1" + " = " + start + "-" + end + "\\2" + "\n"
+                    part_string += "WAG, " + key + "_pos2" + " = " + str(int(start) + 1) + "-" + end + "\\2" + "\n"
+            elif codons == "123":
+                for key in part_list:
+                    start, end = str(part_dict[key]).split("-")
+                    part_string += "WAG, " + key + "_pos1" + " = " + start + "-" + end + "\\3" + "\n"
+                    part_string += "WAG, " + key + "_pos2" + " = " + str(int(start) + 1) + "-" + end + "\\3" + "\n"
+                    part_string += "WAG, " + key + "_pos3" + " = " + str(int(start) + 2) + "-" + end + "\\3" + "\n"
         return part_string
 
-    def write_partitions(self, file_name, part_format):
+    def write_partitions(self, file_name, part_format, codons):
         # write partitions file for concatenated alignment
         self.file_overwrite_error(file_name)        
         part_file = open(file_name, "w")
         if part_format == "nexus":
-            part_file.write(self.print_nexus_partitions())
+            part_file.write(self.print_nexus_partitions(codons))
         if part_format == "raxml":
-            part_file.write(self.print_raxml_partitions(self.data_type))
+            part_file.write(self.print_raxml_partitions(self.data_type, codons))
         if part_format == "unspecified":
-            part_file.write(self.print_unspecified_partitions())
+            part_file.write(self.print_unspecified_partitions(codons))
         print("Wrote partitions for the concatenated file to '" + file_name + "'")
 
     def get_extension(self, file_format):
@@ -1818,6 +1967,17 @@ class MetaAlignment():
         self.file_overwrite_error(out_file_name)   
         self.write_formatted_file(file_format, out_file_name, alignment)
 
+    def write_trimmed(self, index, alignment, file_format, extension):
+        # write trimmed alignments
+        if self.trim_out: 
+            out_file_name = self.trim_out
+        else:
+            prefix = "trimmed_"
+            file_name = self.get_alignment_name(index, extension)
+            out_file_name = prefix + file_name
+        self.file_overwrite_error(out_file_name)   
+        self.write_formatted_file(file_format, out_file_name, alignment)
+
     def write_out(self, action, file_format):
         # write other output files depending on command (action) 
         extension = self.get_extension(file_format)
@@ -1853,7 +2013,7 @@ class MetaAlignment():
         elif action == "remove":
             aln_no = self.write_reduced(file_format, extension)
             if aln_no:
-	            print("Wrote " + str(aln_no) + " " + str(file_format) + " files with reduced taxon set")
+                print("Wrote " + str(aln_no) + " " + str(file_format) + " files with reduced taxon set")
 
         elif action == "translate":
             if self.data_type == "aa":
@@ -1864,6 +2024,14 @@ class MetaAlignment():
             [self.write_translated(i, alignment, file_format, extension) \
              for i, alignment in enumerate(translated_alignment_dicts)]
             print("Translated " + str(length) + " files to amino acid sequences")
+
+        elif action == "trim": # self.trim_fraction, self.parsimony_check
+            trimmed_alignment_dicts = self.get_trimmed(self.trim_fraction, self.parsimony_check)
+            length = len(self.alignment_objects)
+            [self.write_trimmed(i, alignment, file_format, extension) \
+             for i, alignment in enumerate(trimmed_alignment_dicts)]
+            print("Trimmed", str(length), "file(s) to have", self.trim_fraction, "minimum occupancy per alignment column") 
+
 
 def main():
     
@@ -1880,7 +2048,7 @@ def main():
         meta_aln.write_out("convert", kwargs["out_format"])
     if meta_aln.command == "concat":
         meta_aln.write_out("concat", kwargs["out_format"])
-        meta_aln.write_partitions(kwargs["concat_part"], kwargs["part_format"])
+        meta_aln.write_partitions(kwargs["concat_part"], kwargs["part_format"], kwargs["codons"])
     if meta_aln.command == "replicate":
         meta_aln.write_out("replicate", kwargs["out_format"])
     if meta_aln.command == "split":
@@ -1889,6 +2057,10 @@ def main():
         meta_aln.write_out("remove", kwargs["out_format"])
     if meta_aln.command == "translate":
         meta_aln.write_out("translate", kwargs["out_format"])
+    if meta_aln.command == "trim":
+        meta_aln.write_out("trim", kwargs["out_format"])
+
+        # meta_aln.write_out("translate", kwargs["out_format"])
   
 def run():
 
