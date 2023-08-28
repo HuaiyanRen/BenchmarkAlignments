@@ -2,6 +2,7 @@
 #import os
 import yaml
 import pandas as pd
+import csv
 #import glob
 #import AMAS
 
@@ -72,6 +73,11 @@ concatenated_yaml.insert(0, 'name', datasets)
 summarydf = pd.merge(concatenated_smy, concatenated_yaml,  how='left', left_on=['name'], right_on = ['name'])
 
 # write
-summarydf.to_csv(r"C:\Users\u7151703\Desktop\research\code\BenchmarkAlignments\summary.csv",  mode='a', header=False, index=True)
+with open(r"C:\Users\u7151703\Desktop\research\code\BenchmarkAlignments\summary.csv", 'r', encoding='utf-8') as f:
+    reader = csv.reader(f)
+    line_count = sum(1 for row in reader) - 1
+summarydf.insert(0, '', line_count)    
+
+summarydf.to_csv(r"C:\Users\u7151703\Desktop\research\code\BenchmarkAlignments\summary.csv",  mode='a', header=False, index = False)
 
 
